@@ -16,6 +16,7 @@ int distance2; // variable for the distance measurement
 
 unsigned long count = 0;
 
+
 void setup() {
   pinMode(TRIG1, OUTPUT); // Sets the trigPin as an OUTPUT
   pinMode(ECHO1, INPUT); // Sets the echoPin as an INPUT
@@ -26,6 +27,11 @@ void setup() {
   Serial.begin(9600); // // Serial Communication is starting with 9600 of baudrate speed
   Serial.println("Ultrasonic Sensor HC-SR04 Test"); // print some text in Serial Monitor
   Serial.println("with Arduino UNO R3");
+
+  Serial.print("char" + sizeof(char));
+  Serial.print("int" + sizeof(int));
+  Serial.print("short" + sizeof(short));
+  Serial.print("long" + sizeof(long));
 }
 
 void readSensor(const unsigned char sensor_number) {
