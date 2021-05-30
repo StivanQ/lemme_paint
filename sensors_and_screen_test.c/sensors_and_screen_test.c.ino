@@ -1,6 +1,7 @@
 // include TFT and SPI libraries
 #include <TFT.h>  
 #include <SPI.h>
+#include "PinChangeInt.h"
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ DEFINES ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 // sensor pins
@@ -24,6 +25,9 @@
 // sensor 4
 #define ECHO4 A2
 #define TRIG4 A3
+
+// clear screen button
+#define BUTTON_PIN A5
 
 // pin definition for Arduino UNO
 #define cs   10
@@ -52,6 +56,8 @@
 // kalman parameters
 #define INIT_COV_EST 10.0
 
+#define CIRCLE_RADIUS 2
+
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ VARIABLES ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 // echo pins
@@ -72,8 +78,8 @@ int history_idx = 0;
 int screen_width;
 int screen_height;
 
-int crt_x;
-int crt_y;
+int crt_x = INFINITY;
+int crt_y = INFINITY;
 
 int last_x;
 int last_y;
@@ -99,17 +105,23 @@ double K_2[2];
 
 // create an instance of the library
 TFT TFTscreen = TFT(cs, dc, rst);
-
+int clear_screen_flag = 0;
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ SET UP FUNCTIONS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-void init_sensors_pins()
+void init_intrerrupts()
+{
+        PCintPort::attachInterrupt(BUTTON_PIN, button_handler, RISING);
+}
+
+void init_pins()
 {
         for (int i = 0; i < NO_OF_SENSORS; i++) {
                 pinMode(echo_pins[i], INPUT);
                 pinMode(trig_pins[i], OUTPUT);
         }
 
+        pinMode(BUTTON_PIN, INPUT);
 }
 
 void init_kalman_params()
@@ -123,13 +135,25 @@ void init_kalman_params()
         for (int i = 0; i < 2; i++) {
                 Q_2[i] = INIT_COV_EST;
                 P_2[i] = 0.0;
-                U_hat_2[i] = INFINITY;
                 K_2[i] = 0.0;
         }
+        U_hat_2[0] = crt_x;
+        U_hat_2[1] = crt_y;
 }
 
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ MEASUREMENT FUCNTIONS ~~~~~~~~~~~~~~~~~~~~~~~~ */
+
+void button_handler()
+{
+        static unsigned long last_interrupt_time = 0;
+        unsigned long interrupt_time = millis();
+        // If interrupts come faster than 100ms, assume it's a bounce and ignore
+        if (interrupt_time - last_interrupt_time > 100) {
+                clear_screen_flag = 1;
+        }
+        last_interrupt_time = interrupt_time;
+}
 
 void clear_measurements()
 {
@@ -190,9 +214,7 @@ void sanitize_readings()
                 median(measurements[i]);
                 // store results
                 results[i] = measurements[i][2];
-                history[i][history_idx % NO_OF_HIST_MEASUREMENTS] = results[i];
         }
-        history_idx++;
 }
 
 // reads all the sensors five times and gets the median for each sensors
@@ -249,18 +271,17 @@ void read_wrapper()
 // https://github.com/rizkymille/ultrasonic-hc-sr04-kalman-filter/blob/master/hc-sr04_kalman_filter/hc-sr04_kalman_filter.ino
 
 double kalman(double U, int s){
-        // TODO: fine-tune H = 1.00, R = 40 atm
-        K[s] = P[s] * H/(H * P[s] * H + R);
-        U_hat[s] += + K[s] * (U - H * U_hat[s]);
-        P[s] = (1 - K[s] * H) * P[s] + Q[s];
+        K[s] = P[s] /(P[s] + R);
+        U_hat[s] += K[s] * (U - U_hat[s]);
+        P[s] = (1 - K[s]) * P[s] + Q[s];
         return U_hat[s];
 }
 
 double kalman_2(double U, int s){
         // TODO: fine-tune H = 1.00, R = 40 atm
-        K_2[s] = P_2[s] * H/(H * P_2[s] * H + R);
-        U_hat_2[s] += + K_2[s] * (U - H * U_hat_2[s]);
-        P_2[s] = (1 - K_2[s] * H) * P_2[s] + Q_2[s];
+        K_2[s] = P_2[s] / (P_2[s] + R);
+        U_hat_2[s] += K_2[s] * (U - U_hat_2[s]);
+        P_2[s] = (1 - K_2[s]) * P_2[s] + Q_2[s];
         return U_hat_2[s];
 }
 
@@ -324,7 +345,7 @@ void kalman_raw_wrapper()
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ DARWING FUNCTIONS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-void random_collor()
+void random_color()
 {
         int r = random() % 256;
         int g = random() % 256;
@@ -333,32 +354,18 @@ void random_collor()
         TFTscreen.stroke(b, g, r);
 }
 
-/*
-void draw_test_lines(unsigned int distance1, unsigned int distance2)
+void clear_screen()
 {
-        if (last_distance1 == distance1) {
-//               return;
-        } else {
-                TFTscreen.stroke(0, 0, 0);
-                TFTscreen.line(last_distance1, 0, last_distance1, screen_height);
-                last_distance1 = distance1;
-                
-                TFTscreen.stroke(0, 0, 255);
-                TFTscreen.line(distance1, 0, distance1, screen_height);
-        }
-        if (last_distance2 == distance2) {
-        //       return;
-        } else {
-                TFTscreen.stroke(0, 0, 0);
-                TFTscreen.line(last_distance2, 0, last_distance2, screen_height);
-                last_distance2 = distance2;
-                
-                TFTscreen.stroke(0, 255, 0);
-                TFTscreen.line(distance2, 0, distance2, screen_height);
+        if (clear_screen_flag != 0) {
+
+                // clear the screen with a black background
+                TFTscreen.background(0, 0, 0);
+
+                // reset kalman params after a clear screen
+                init_kalman_params();
+                clear_screen_flag = 0;
         }
 }
-
-*/
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ DEBUG FUNCTIONS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
@@ -384,13 +391,16 @@ void print_measurements()
 void setup() {
 
         // pin mode and other stuff
-        init_sensors_pins();
+        init_pins();
         
         // measurements
         clear_measurements();
 
         // kalman stuff
         init_kalman_params();
+
+        // intrerrupt stuff
+        init_intrerrupts();
         
         //initialize the library
         TFTscreen.begin();
@@ -403,39 +413,31 @@ void setup() {
         screen_width = TFTscreen.width();
         screen_height = TFTscreen.height();
         
-        
-        // set a random font color
-        TFTscreen.stroke(0, 0, 255);
-        
         Serial.begin(9600);
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ LOOP ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 void loop() {
+        // take time at start of loop()
         long t1 = micros();
-        random_collor();
 
+        // check for intrerrupt flag that wants to clear the screen
+        clear_screen();
+
+        // pink a new random color
+        random_color();
+
+        // read sensors and filter them with double kalman
         kalman_wrapper();
 
-//        kalman_read();
-//        crt_x = MIN_2(U_hat[0], U_hat[1]);
-//        crt_y = MIN_3(U_hat[2], U_hat[3], U_hat[4]);
-        
-//        read_wrapper();
-//        crt_x = MIN_3(results[2], results[3], results[4]);
-//        crt_y = MIN_2(results[0], results[1]);
-        TFTscreen.circle(screen_width - crt_x, crt_y, 3);
-//        print_measurements();
+        // write data to screen
+        TFTscreen.circle(screen_width - crt_x, crt_y, CIRCLE_RADIUS);
+
+        // measure how much time was spent on loop()
         long t2 = micros();
-        
-        Serial.println((t2 - t1) / 1000);
-        Serial.println(debug);
-        debug = 0;
-//        Serial.println((t2 - t1) / 1000);
-//        Serial.println(MIN_3(1,2,3));
-//        Serial.println(MIN_3(2,3,1));
-//        Serial.println(MIN_3(3,1,2));
+        Serial.print((t2 - t1));
+        Serial.println(" microseconds took for the loop() function to execute");
 }
 
 /* EOF */
