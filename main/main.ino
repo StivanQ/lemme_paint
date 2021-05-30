@@ -41,6 +41,7 @@
 
 // max distance = 40 cm?? = 160 * 1/4 cm
 #define INFINITY 160
+#define INFINITY_D 160.0
 
 // some magic defines for median of 5 elements
 #define swap(a,b) (a) ^= (b); (b) ^= (a); (a) ^= (b);
@@ -87,7 +88,7 @@ int last_y;
 int debug = 0;
 
 // Kalman Filtering stuff
-const double R = 40.0;
+const double R = 100.0;
 const double H = 1.00;
 // initial covariance estimate
 double Q[NO_OF_SENSORS];
@@ -236,16 +237,6 @@ void read_sensors()
         crt_y = MIN_3(results[2], results[3], results[4]);
 }
 
-// reads all the sensors and stores the results into `int raw_data[]`
-void read_sensors_raw()
-{
-        // read each sensor back-to-back
-        for (int j = 0; j < NO_OF_SENSORS; j++) {
-                // sensors are indexed from 0 to NO_OF_SENSORS - 1
-                raw_data[j] = sensor_distance(j);
-        }
-}
-
 void read_wrapper()
 {
         int acc;
@@ -300,18 +291,6 @@ void kalman_read()
         }
 }
 
-// results are stored in U_hat
-void kalman_raw()
-{
-        read_sensors_raw();
-        
-        double clear_reading = 0.0;
-        double kalman_reading = 0.0;
-        for (int i = 0; i < NO_OF_SENSORS; i++) {
-                kalman(raw_data[i], i);
-        }
-}
-
 void kalman_wrapper()
 {
         // kalman filter fore ach sensor individually
@@ -330,20 +309,15 @@ void kalman_wrapper()
         Serial.println(crt_y);
 }
 
-
-void kalman_raw_wrapper()
-{
-        kalman_raw();
-        // calculate position
-        crt_x = MIN_2(U_hat[0], U_hat[1]);
-        crt_y = MIN_3(U_hat[2], U_hat[3], U_hat[4]);
-
-        // kalman on position
-        crt_x = kalman_2(crt_x, 0);
-        crt_y = kalman_2(crt_y, 1);
-}
-
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ DARWING FUNCTIONS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+
+void scale_results()
+{
+        crt_x -= 4 * 8; // 1/4 of cms
+        crt_y -= 4 * 5; // 1/4 of cms
+        crt_x = (crt_x * screen_width) / (INFINITY_D - 4 * 8);
+        crt_y = (crt_y * screen_height) / (INFINITY_D - 4 * 5);
+}
 
 void random_color()
 {
@@ -427,6 +401,8 @@ void loop() {
 
         // pink a new random color
         random_color();
+
+        scale_results();
 
         // read sensors and filter them with double kalman
         kalman_wrapper();
